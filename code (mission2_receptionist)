@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+import rospy
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
+from std_msgs.msg import String
+from mr_voice.msg import Voice
+import numpy as np
+from RobotChassis import RobotChassis
+
+def callback_depth(msg):
+    global depth
+    tmp = CvBridge().imgmsg_to_cv2(msg, "passthrough")
+    depth = np.array(tmp, dtype=np.float32)
+
+def callback_voice(msg):
+    global voice_text
+    voice_text = msg.text
+
+if __name__ == "__main__":
+    rospy.init_node("ros_tutorial")
+    rospy.loginfo("ros_tutorial node start!")
+
+    speaker = rospy.Publisher("/speaker/say", String, queue_size=10, latch=True)
+
+    depth = None
+    topic_name = "/camera/depth/image_raw"
+    rospy.Subscriber(topic_name, Image, callback_depth)
+    rospy.wait_for_message(topic_name, Image)
+
+    chassis = RobotChassis()
+    print("Robot chassis initialized")
+
+    # Increase movement speed if supported
+    if hasattr(chassis, "set_speed"):
+        chassis.set_speed(5.0)  # Adjust speed value as needed
+        rospy.sleep(0.5)  # Allow some time for the setting to take effect
+        print(f"Speed set to: {chassis.set_speed(5.0)}")
+
+    nameList = ["adam", "axel", "chris", "hunter", "jack", "max", "paris", "robin", "olivia", "william"]
+    drinkList = ["coke", "orange juice", "wine", "green tea", "soda", "water"]
+
+    voice_text = ""
+    voice_topic = "/voice/text"
+    rospy.Subscriber(voice_topic, Voice, callback_voice)
+    step = 0
+
+    while not rospy.is_shutdown():
+        rospy.sleep(1)  # Reduced sleep time for faster response
+        print(step)
+        if depth is None or depth.size == 0:
+            print("Depth data is missing")
+            continue
+
+        h, w = depth.shape
+        middle_w = w // 2
+        middle_h = h // 2
+        deepdistance = depth[middle_h, middle_w] if depth is not None else None
+
+        if deepdistance is None or np.isnan(deepdistance):
+            print("Invalid depth reading")
+            continue
+
+        if step == 0 and 100 < deepdistance < 500:
+            print("distance <600")
+            speaker.publish("I AM READY!")
+            speaker.publish("What is your name?")
+            step = 1
+
+        elif step == 1:
+            if voice_text:
+                for name in nameList:
+                    if name in voice_text.lower():
+                        speaker.publish(f"Is your name {name}?")
+                        step = 2
+                voice_text = ""
+
+        elif step == 2:
+            if "yes" in voice_text.lower():
+                speaker.publish(f"Hi, {name}, what is your favorite drink?")
+                voice_text = ""
+                step = 3
+            elif "no" in voice_text.lower():
+                speaker.publish("Okay, then what is your name?")
+                voice_text = ""
+                step = 0
+
+        elif step == 3:
+            for drink in drinkList:
+                if drink in voice_text.lower():
+                    speaker.publish(f"Is your favorite drink {drink}?")
+                    step = 4
+                    break
+            voice_text = ""
+
+        elif step == 4:
+            if "yes" in voice_text.lower():
+                speaker.publish(f"Okay, {name}, please follow me.")
+                voice_text = ""
+                step = 8
+            elif "no" in voice_text.lower():
+                speaker.publish("Okay, then what is your favorite drink?")
+                voice_text = ""
+                step = 3
+
+        elif step == 8:
+            print("Attempting to move to (4.24,-1,0 higher speed")
+            chassis.move_to(4.34, -1.83,0)#middle chair
+            rospy.sleep(1)
+            step = 9
+
+        elif step == 9:
+             # Reduced sleep time for faster status checking
+            code = chassis.status_code
+            print(f"Status code after move: {code}")
+
+            if code == 3:
+                print("Master is here")
+                speaker.publish(f"This is {name}, and their favorite drink is {drink}")
+                voice_text = ""
+                step = 11
+            elif code == 4:
+                print("Failed to move, retrying.")
+                  # Retry movement
+
+        if step == 11:
+            chassis.move_to(4.24,-1, 0)#left chair
+            while chassis.status_code not in [3, 4]:
+                rospy.sleep(1)  # Check status more frequently
+
+            if chassis.status_code == 3:
+                speaker.publish(f"Please be sitted here")
+                voice_text = ""
+                step = 13
+                
+            elif chassis.status_code == 4:
+                print("Failed to move.")
+            if step == 13:
+                chassis.move_to1(1.23,-1.64,0)#original point
+                while chassis.status_code not in [3, 4]:
+                    rospy.sleep(1) # Reduced sleep for faster response
+
+                if chassis.status_code == 3:
+                    step = 14
+                elif chassis.status_code == 4:
+                    print("Failed to move.")
+
+            
+        elif step == 14 and 100 < deepdistance < 600:
+            print("distance < 600")
+            speaker.publish("I AM READY!")
+            speaker.publish("What is your name?")
+            step = 16
+
+        elif step == 16:
+            if voice_text:
+                for name in nameList:
+                    if name in voice_text.lower():
+                        speaker.publish(f"Is your name {name}?")
+                        step = 17
+                        break
+                voice_text = ""
+
+        elif step == 17:
+            if "yes" in voice_text.lower():
+                speaker.publish(f"Hi, {name}, what is your favorite drink?")
+                voice_text = ""
+                step = 18
+            elif "no" in voice_text.lower():
+                speaker.publish("Okay, then what is your name?")
+                voice_text = ""
+                step = 15
+
+        elif step == 18:
+            for drink in drinkList:
+                if drink in voice_text.lower():
+                    speaker.publish(f"Is your favorite drink {drink}?")
+                    step = 19
+                    break
+            voice_text = ""
+
+        elif step == 19:
+            if "yes" in voice_text.lower():
+                speaker.publish(f"Okay, {name}, please follow me.")
+                voice_text = ""
+                step = 20
+            elif "no" in voice_text.lower():
+                speaker.publish("Okay, then what is your favorite drink?")
+                voice_text = ""
+                step = 17
+
+        elif step == 20:
+            chassis.move_to(4.13, -2.7, 0)
+            while chassis.status_code not in [3, 4]:
+                rospy.sleep(1)  # Check status more frequently
+
+            if chassis.status_code == 3:
+                speaker.publish(f"This is {name}, and their favorite drink is {drink}")
+                voice_text = "" 
+                step = 21
+            elif chassis.status_code == 4:
+                print("Failed to move.")
+
+        elif step == 21:
+                chassis.move_to(4.34, -1.8, 0)#middle chair
+                while chassis.status_code not in [3, 4]:
+                    rospy.sleep(1)  # Check status more frequently
+
+                if chassis.status_code == 3:
+                    speaker.publish(f"Please be sitted here")
+                    voice_text = ""
+                    
+                elif chassis.status_code == 4:
+                    print("Failed to move.")
+
+
+
+rospy.loginfo("ros_tutorial node end!")
+
+
+
+
